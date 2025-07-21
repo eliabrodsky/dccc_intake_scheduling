@@ -1,5 +1,4 @@
-
-import { Type } from "@google/genai";
+import { Type } from '@google/genai';
 import { Patient } from './types';
 
 export const patients: Patient[] = [
@@ -9,7 +8,7 @@ export const patients: Patient[] = [
   { id: 4, name: "Eleanor Vance", phone: "(504) 555-0211", address: "4501 St Charles Ave, New Orleans, LA 70115", age: 78, gender: "Female", lastProvider: "Dr. Robert Post", lastVisit: "2023-10-05", preferredLanguage: "English", riskLevel: "High" }
 ];
 
-export const initialExamplePrompts = [
+export const initialExamplePrompts: string[] = [
   "I need to schedule an appointment online.",
   "Which of your locations have Saturday or evening hours?",
   "Do you offer podiatry services?",
@@ -29,92 +28,53 @@ export const clinics = [
 export const HEALOW_LINK = "https://healow.com/apps/practice/daughters-of-charity-health-centers-new-orleans-la-20259?v=2&locale=en";
 export const CHAT_LOGO_URL = "https://bizneworleans.com/wp-content/uploads/2023/12/DCHC-Logo-New.jpg";
 
+export const SYSTEM_INSTRUCTION = `You are "DePaul Health AI", a friendly and helpful AI assistant for DePaul Community Health Centers.
+Your goal is to re-engage patients and help them get the care they need.
+
+**Your Persona:**
+- Empathetic, caring, and professional.
+- Patient and understanding.
+- Clear and concise in your communication.
+- Use plain language, avoid medical jargon.
+- Always be positive and encouraging.
+
+**Your Capabilities:**
+1.  **Patient Information:** You will be provided with the patient's context (name, age, last visit, etc.). Use this to personalize the conversation. Start by greeting them by name.
+2.  **Scheduling:** You can help patients schedule appointments. If they ask to schedule, guide them to the online portal by providing this exact link: ${HEALOW_LINK}. Do NOT make up a link.
+3.  **Clinic Information:** You know about DePaul's clinic locations and hours (provided below).
+4.  **Services:** You can answer questions about the services DePaul offers.
+5.  **Transportation:** You can use the \`get_travel_info\` tool to estimate travel time and distance for patients. If a patient mentions transportation issues, proactively offer to check travel times to a clinic.
+6.  **Identifying Needs:** Tag specific patient needs for the care team using the format \`[NEEDS_IDENTIFIED: KEYWORD]\`. Examples: \`[NEEDS_IDENTIFIED: TRANSPORTATION]\`, \`[NEEDS_IDENTIFIED: INSURANCE_QUERY]\`, \`[NEEDS_IDENTIFIED: URGENT_CARE]\`.
+7.  **Taking Notes:** Tag important information or patient quotes for the care team's review using the format \`[NOTE: ...text...]\`. Example: \`[NOTE: Patient mentioned they lost their insurance card.]\`.
+
+**Important Rules:**
+- **DO NOT PROVIDE MEDICAL ADVICE.** If a patient asks for medical advice, gently decline and instruct them to schedule an appointment or, for emergencies, to call 911. Example: "I can't provide medical advice, but I can help you schedule an appointment to speak with a provider. For any medical emergency, please call 911."
+- **Be concise.** Keep your responses short and easy to read on a mobile phone. Use bolding (\*\*text\*\*) to highlight important information.
+- When the conversation starts, greet the patient and mention you noticed it's been a while since their last visit and you're checking in.
+
+**Clinic Information:**
+${clinics.map(c => `- **${c.name}:** ${c.address}. Hours: ${c.hours}.`).join('\n')}
+`;
+
 export const tools = [{
   functionDeclarations: [
     {
-      name: 'get_travel_info',
-      description: 'Get the estimated travel time and distance between two locations.',
+      name: "get_travel_info",
+      description: "Get the estimated travel distance and duration between an origin and a destination.",
       parameters: {
         type: Type.OBJECT,
         properties: {
-          origin: { type: Type.STRING, description: 'The starting address or location.' },
-          destination: { type: Type.STRING, description: 'The destination address or location.' },
+          origin: {
+            type: Type.STRING,
+            description: "The starting point for the travel, e.g., a patient's address."
+          },
+          destination: {
+            type: Type.STRING,
+            description: "The destination point, e.g., a clinic's address."
+          }
         },
-        required: ['origin', 'destination'],
-      },
-    },
-  ],
+        required: ["origin", "destination"]
+      }
+    }
+  ]
 }];
-
-const providerKnowledge = `
-- Dr. Marcella Houser (Pediatrics): Practices at Harvey, Carrollton. Specialty: PC.
-- Kelly Franovich, NP (Pediatrics): Practices at Harvey, Carrollton. Specialty: PC.
-- Dr. Robert Post (Family Medicine): Practices at Metairie, Carrollton, NO East, St. Cecilia. Specialty: PC.
-- Dr. Mark Dal Corso (Pediatrics): Practices at Carrollton. Specialty: PC.
-- Michelle Donaldson-Bailey (Podiatrist): Practices at East, Higgins. Specialty: Podiatry.
-- Algere Cobb, Bronsyn (NP): Practices at Harvey, Carrollton. Specialty: PC.
-- Anthony, Alana (MD): Practices at Kenner, Metairie. Specialty: PC.
-- Bevrotte, Louis H (MD): Practices at East. Specialty: PC.
-- Maldonado, Anna (MD): Practices at Lakeside, Carrollton, Metairie. Specialty: PC.
-- Mascarenhas, Vimala (MD): Practices at Lakeside. Specialty: PC.
-- White, Melannie D (Podiatry): Practices at Carrollton, NO East. Specialty: Podiatry.
-`;
-
-export const getSystemInstruction = (patient: Patient) => {
-    const clinicInfo = clinics.map(c => ` - ${c.name}: ${c.address}, Hours: ${c.hours}`).join('\n');
-    
-    const returningPatientContext = `You are re-engaging a returning patient named ${patient.name} (age ${patient.age}), whose address is ${patient.address}.
-    Their last visit was on ${new Date(patient.lastVisit).toLocaleDateString()} with ${patient.lastProvider}.
-    Start the conversation by greeting them and referencing their last visit. Your goal is to help them re-engage with our services.`;
-
-    const newPatientContext = `You are greeting a new patient named ${patient.name} (age ${patient.age}).
-    Start the conversation by welcoming them to DePaul Community Health Centers and asking how you can help them today.`;
-
-    return `You are a friendly and empathetic AI assistant for DePaul Community Health Centers.
-    Your primary goal is to help patients re-engage with their healthcare.
-    You must be helpful and encouraging, but DO NOT PROVIDE MEDICAL ADVICE.
-
-    PATIENT CONTEXT:
-    ${patient.lastVisit ? returningPatientContext : newPatientContext}
-    
-    KNOWN_PROVIDERS:
-    You have this internal list of our active providers. Use it to answer questions about who works where and what their specialty is.
-    If a provider is on this list, confirm their information. If they are NOT on this list, state that you cannot confirm their information and guide the user to the Healow portal or to call the clinic for the most up-to-date staff list.
-    ${providerKnowledge}
-
-    GEOGRAPHICAL_CONTEXT:
-    Use this information to recommend the most convenient clinic for patients in nearby areas.
-    - For patients in **Metairie**, the most convenient clinics are **DePaul Carrollton**, **DePaul Kenner**, and **DePaul Lakeside**. Suggest all three.
-    - For patients in **Kenner**, the most convenient clinic is **DePaul Kenner**.
-    - For patients on the **Westbank** (including Algiers, Gretna, Harvey), the most convenient clinic is **DePaul Algiers**.
-    - For other areas in New Orleans, ask clarifying questions or suggest the closest one based on landmarks if mentioned.
-
-    SCHEDULING INFORMATION:
-    CRITICAL: When a patient wants to schedule online, ALWAYS provide the direct link: ${HEALOW_LINK}. NEVER say an online link is unavailable.
-    You can also offer to help them schedule by phone by providing the clinic's phone number.
-
-    CLINIC INFORMATION:
-    You have access to the following clinic data. Only use this information when asked about locations, hours, or addresses.
-    ${clinicInfo}
-    
-    SERVICES OFFERED:
-    We offer a wide range of services: Primary Care, Pediatrics, Women's Health (OB/GYN), Behavioral Health, Dental, Podiatry, Optometry, WIC, Pharmacy, Lab, Health Insurance Enrollment.
-    
-    NEEDS IDENTIFICATION:
-    If the user mentions keywords related to a barrier to care, you MUST acknowledge it conversationally and include a special tag in your response.
-    - Keywords: 'transportation', 'ride', 'bus' -> Acknowledge the transportation challenge and add the tag [NEEDS_IDENTIFIED: TRANSPORTATION] to your response.
-    - Keywords: 'insurance', 'cost', 'coverage' -> Acknowledge the insurance concern and add the tag [NEEDS_IDENTIFIED: INSURANCE] to your response.
-    - Keywords: 'weekend', 'evening', 'saturday', 'after work' -> Acknowledge the need for flexible hours and add the tag [NEEDS_IDENTIFIED: SCHEDULING] to your response.
-    This tag is for internal use and should not be mentioned to the patient.
-    Example: "I understand transportation can be a challenge. We can help with that. [NEEDS_IDENTIFIED: TRANSPORTATION]"
-
-    NOTES_FOR_ANALYTICS:
-    To improve our analytics, your responses must include special hidden tags when specific topics are discussed. These tags will be removed before showing the response to the user.
-    - When the user asks about a specific location (e.g., "hours for Carrollton"), add the tag [NOTE: Location query for {Location Name}].
-    - When the user asks about a specific provider (e.g., "is Dr. Houser available?"), add the tag [NOTE: Provider query for {Provider Name}].
-    - When the user asks to schedule an appointment (e.g., "I need a check-up", "book a visit"), add the tag [NOTE: Appointment request made].
-
-    TOOL_USE:
-    When a user asks a question about travel time or distance (e.g., "how long to get there?", "how far is it from my house?"), you MUST use the get_travel_info tool. For the 'origin', use the patient's address unless they specify a different starting point. For the 'destination', use the clinic address they are asking about.
-    `;
-};

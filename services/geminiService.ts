@@ -1,71 +1,34 @@
-import { GoogleGenAI, Chat, Part } from "@google/genai";
-import { tools } from '../constants';
 
-const executeToolCall = async (call: any) => {
-    try {
-        if (call.name === 'get_travel_info') {
-            const { origin, destination } = call.args;
-            console.log(`Simulating travel info call for: ${origin} to ${destination}`);
-            
-            // --- REAL API CALL WOULD GO HERE ---
-            // In a real-world deployment, you would replace this simulation
-            // with a fetch() call to the Google Maps Distance Matrix API.
-            // You would need to provide your own Google Maps API key.
-            // const GOOGLE_MAPS_API_KEY = 'YOUR_API_KEY_HERE';
-            // const url = `https://maps.googleapis.com/maps/api/distancematrix/json?units=imperial&origins=${encodeURIComponent(origin)}&destinations=${encodeURIComponent(destination)}&key=${GOOGLE_MAPS_API_KEY}`;
-            // const response = await fetch(url);
-            // const data = await response.json();
-            // const result = data.rows[0].elements[0];
-            // return { distance: result.distance.text, duration: result.duration.text };
+const API_BASE_URL = '/api';
 
-            // For now, we return a simulated result for the demo.
-            return {
-                distance: `${Math.floor(Math.random() * 10) + 2} miles`,
-                duration: `${Math.floor(Math.random() * 15) + 10} minutes`
-            };
-        }
-    } catch (error) {
-        console.error("Error executing tool call:", error);
-        // Return a structured error so the AI knows the tool failed.
-        return { error: "Failed to get travel information." };
+export const startChatSession = async (
+    patientContext: string,
+    initialPrompt: string
+): Promise<{ sessionId: string; responseText: string }> => {
+    const response = await fetch(`${API_BASE_URL}/chat/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ patientContext, initialPrompt }),
+    });
+
+    if (!response.ok) {
+        throw new Error('Failed to start chat session with the backend.');
     }
-    return { error: "Unknown tool call." };
+    return response.json();
 };
 
-export const processAiResponse = async (chatSession: Chat | null, prompt: string, systemInstruction?: string) => {
-    let session = chatSession;
-    if (!session) {
-        const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-        session = ai.chats.create({
-            model: 'gemini-2.5-flash',
-            config: {
-                systemInstruction: systemInstruction,
-                tools: tools,
-            },
-        });
-    }
+export const sendMessage = async (
+    sessionId: string,
+    message: string
+): Promise<{ responseText:string }> => {
+    const response = await fetch(`${API_BASE_URL}/chat/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId, message }),
+    });
     
-    let response = await session.sendMessage({ message: prompt });
-    let functionResponse = response.functionCalls?.[0];
-
-    while (functionResponse) {
-        try {
-            const apiResult = await executeToolCall(functionResponse);
-            
-            const toolResponse: Part[] = [{
-                functionResponse: {
-                    name: functionResponse.name,
-                    response: apiResult,
-                },
-            }];
-
-            response = await session.sendMessage({ message: { parts: toolResponse }});
-            
-            functionResponse = response.functionCalls?.[0];
-        } catch(e) {
-            console.error("Error processing tool call response", e);
-            functionResponse = undefined;
-        }
+    if (!response.ok) {
+        throw new Error('Failed to send message to the backend.');
     }
-    return { responseText: response.text, session: session };
-}
+    return response.json();
+};

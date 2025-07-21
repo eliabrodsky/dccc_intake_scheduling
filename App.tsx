@@ -1,6 +1,4 @@
-
-import React, { useState, useEffect, useRef } from 'react';
-import { Chat } from "@google/genai";
+import React, { useState } from 'react';
 
 import { LandingPage } from './components/LandingPage';
 import { AnalyticsDashboard } from './components/AnalyticsDashboard';
@@ -8,96 +6,104 @@ import { ChatInterface } from './components/ChatInterface';
 import { NewPatientModal } from './components/NewPatientModal';
 
 import { Patient, SessionData, ChatRecord, Message } from './types';
-import { patients, initialExamplePrompts, getSystemInstruction, tools } from './constants';
-import { processAiResponse } from './services/geminiService';
-import { generateNewPrompts as generatePrompts } from './services/promptService';
+import { patients, initialExamplePrompts } from './constants';
+import { startChatSession, sendMessage } from './services/geminiService';
+import { generateNewPrompts as generatePromptsFromApi } from './services/promptService';
 
-
-// --- MAIN APP COMPONENT ---
-const DePaulPatientEngagementPlatform = () => {
-    const [currentView, setCurrentView] = useState('landing'); // 'landing', 'chat', 'analytics'
+const App: React.FC = () => {
+    const [currentView, setCurrentView] = useState<'landing' | 'chat' | 'analytics'>('landing');
     const [messages, setMessages] = useState<Message[]>([]);
     const [inputValue, setInputValue] = useState('');
     const [currentPatient, setCurrentPatient] = useState<Patient | null>(null);
     const [sessionData, setSessionData] = useState<SessionData>({});
     const [chatSessions, setChatSessions] = useState<ChatRecord[]>([]);
-    const [activeChat, setActiveChat] = useState<Chat | null>(null);
+    const [sessionId, setSessionId] = useState<string | null>(null);
     const [isAiTyping, setIsAiTyping] = useState(false);
     const [isNewPatientModalOpen, setIsNewPatientModalOpen] = useState(false);
     const [newPatientInfo, setNewPatientInfo] = useState({ name: '', phone: '', age: '' });
-    const [dynamicPrompts, setDynamicPrompts] = useState(initialExamplePrompts);
+    const [dynamicPrompts, setDynamicPrompts] = useState<string[]>(initialExamplePrompts);
     const [isGeneratingPrompts, setIsGeneratingPrompts] = useState(false);
     const [simulatingPrompt, setSimulatingPrompt] = useState<string | null>(null);
 
     const addMessage = (content: string, sender: 'ai' | 'user') => {
         setMessages(prev => [...prev, {
-            id: Date.now() + prev.length, // more robust key
+            id: Date.now() + Math.random(),
             content,
             sender,
             timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         }]);
     };
+    
+    const processAndAddAiResponse = (responseText: string) => {
+        let processedText = responseText;
+        const needsIdentified: string[] = [];
+        const notes: string[] = [];
+
+        const needsTagRegex = /\[NEEDS_IDENTIFIED:\s*(\w+)\s*\]/g;
+        processedText = processedText.replace(needsTagRegex, (match, tag) => {
+            needsIdentified.push(tag.toUpperCase());
+            return '';
+        });
+
+        const noteTagRegex = /\[NOTE:\s*(.*?)\s*\]/g;
+        processedText = processedText.replace(noteTagRegex, (match, note) => {
+            notes.push(note);
+            return '';
+        });
+        
+        if (needsIdentified.length > 0 || notes.length > 0) {
+            setSessionData(prev => ({
+                ...prev,
+                needsIdentified: [...(prev.needsIdentified || []), ...needsIdentified],
+                notes: [...(prev.notes || []), ...notes],
+            }));
+        }
+        
+        addMessage(processedText.trim(), 'ai');
+    };
 
     const startConversation = async (patient: Patient) => {
         setCurrentPatient(patient);
         setMessages([]);
-        const newSessionData: SessionData = { sessionId: `session_${Date.now()}`, patientId: patient.id, startTime: new Date().toISOString(), needsIdentified: [], notes: [] };
-        setSessionData(newSessionData);
         setCurrentView('chat');
+        setIsAiTyping(true);
+        setSessionId(null);
+
+        const patientContext = `This chat is with ${patient.name}. 
+Patient details:
+- Age: ${patient.age}
+- Last Visit: ${patient.lastVisit || 'N/A'}
+- Last Provider: ${patient.lastProvider || 'N/A'}
+- Risk Level: ${patient.riskLevel}
+- Address: ${patient.address}
+- Preferred Language: ${patient.preferredLanguage}`;
+    
+        const initialPrompt = "Start the conversation.";
     
         try {
-            const chat = await processAiResponse(null, "Start the conversation.", getSystemInstruction(patient));
-            setActiveChat(chat.session);
-            setIsAiTyping(false);
+            const { sessionId, responseText } = await startChatSession(patientContext, initialPrompt);
             
-            addMessage(chat.responseText, 'ai');
+            const newSessionData: SessionData = { sessionId, patientId: patient.id, startTime: new Date().toISOString(), needsIdentified: [], notes: [] };
 
+            setSessionData(newSessionData);
+            setSessionId(sessionId);
+            processAndAddAiResponse(responseText);
         } catch (error) {
             console.error("Error starting conversation:", error);
             addMessage("I'm sorry, I'm having trouble connecting right now. Please try again later.", 'ai');
+        } finally {
             setIsAiTyping(false);
         }
     };
     
     const handleResponse = async (userMessage: string) => {
-        if (!userMessage.trim() || !activeChat) return;
+        if (!userMessage.trim() || !sessionId) return;
         addMessage(userMessage, 'user');
         setIsAiTyping(true);
 
         try {
-            const chatResponse = await processAiResponse(activeChat, userMessage);
-            
-            let aiResponseText = chatResponse.responseText;
-            const needsTagRegex = /\[NEEDS_IDENTIFIED:\s*(\w+)\s*\]/g;
-            const newNeeds: string[] = [];
-            let needsMatch;
-            while ((needsMatch = needsTagRegex.exec(aiResponseText)) !== null) {
-                newNeeds.push(needsMatch[1]);
-            }
-            if (newNeeds.length > 0) {
-                setSessionData(prev => ({
-                    ...prev,
-                    needsIdentified: [...(prev.needsIdentified || []), ...newNeeds]
-                }));
-            }
-            aiResponseText = aiResponseText.replace(needsTagRegex, '').trim();
-
-            const noteTagRegex = /\[NOTE:\s*(.*?)\s*\]/g;
-            const newNotes: string[] = [];
-            let noteMatch;
-            while ((noteMatch = noteTagRegex.exec(aiResponseText)) !== null) {
-                newNotes.push(noteMatch[1]);
-            }
-            if (newNotes.length > 0) {
-                setSessionData(prev => ({
-                    ...prev,
-                    notes: [...(prev.notes || []), ...newNotes]
-                }));
-            }
-            aiResponseText = aiResponseText.replace(noteTagRegex, '').trim();
-
-            addMessage(aiResponseText, 'ai');
-
+            const { responseText } = await sendMessage(sessionId, userMessage);
+            processAndAddAiResponse(responseText);
         } catch (error) {
             console.error("Error sending message:", error);
             addMessage("I'm having some trouble at the moment. Please give me a minute and try again.", 'ai');
@@ -118,7 +124,13 @@ const DePaulPatientEngagementPlatform = () => {
     };
 
     const handleKeyPress = (e: React.KeyboardEvent<HTMLInputElement>) => {
-        if (e.key === 'Enter') handleSend();
+        if (e.key === 'Enter' && !isAiTyping) handleSend();
+    };
+    
+    const formatDuration = (seconds: number): string => {
+        const mins = Math.floor(seconds / 60);
+        const secs = seconds % 60;
+        return `${mins}m ${secs}s`;
     };
 
     const completeChatSession = () => {
@@ -134,11 +146,11 @@ const DePaulPatientEngagementPlatform = () => {
             chatLengthFormatted: formatDuration(duration),
             outcomeSummary: sessionData.outcome || 'Session ended',
             appointmentScheduled: sessionData.outcome === "Clicked 'Schedule Online'" ? 'Yes' : 'No',
-            appointmentDateTime: sessionData.appointmentDetails?.time || 'N/A',
-            appointmentProvider: sessionData.appointmentDetails?.provider || 'N/A',
-            appointmentLocation: sessionData.appointmentDetails?.location || 'N/A',
-            needsIdentified: sessionData.needsIdentified?.join(', ') || '',
-            notes: sessionData.notes?.join('; ') || ''
+            appointmentDateTime: 'N/A',
+            appointmentProvider: 'N/A',
+            appointmentLocation: 'N/A',
+            needsIdentified: sessionData.needsIdentified?.join(', ') || 'None',
+            notes: sessionData.notes?.join('; ') || 'None'
         };
         setChatSessions(prev => [...prev, chatRecord]);
     };
@@ -147,121 +159,110 @@ const DePaulPatientEngagementPlatform = () => {
         completeChatSession();
         setCurrentView('landing');
         setCurrentPatient(null);
-        setActiveChat(null);
+        setSessionId(null);
         setSessionData({});
+        setMessages([]);
     };
 
-    const formatDuration = (seconds: number) => {
-        const mins = Math.floor(seconds / 60);
-        const secs = seconds % 60;
-        return `${mins}m ${secs}s`;
-    };
-
-    const openNewPatientModal = () => setIsNewPatientModalOpen(true);
-    const closeNewPatientModal = () => {
-        setIsNewPatientModalOpen(false);
-        setNewPatientInfo({ name: '', phone: '', age: '' });
-    };
-    
     const handleNewPatientSubmit = (info: {name: string, phone: string, age: string}) => {
         const newPatient: Patient = {
             id: Date.now(),
             name: info.name,
             phone: info.phone || 'N/A',
-            age: parseInt(info.age, 10),
+            age: parseInt(info.age, 10) || 0,
             address: 'N/A',
             gender: 'N/A',
             lastProvider: 'N/A',
-            lastVisit: '', // Empty lastVisit indicates a new patient
+            lastVisit: '', 
             preferredLanguage: 'English',
             riskLevel: 'Low'
         };
-        closeNewPatientModal();
+        setIsNewPatientModalOpen(false);
+        setNewPatientInfo({ name: '', phone: '', age: '' });
         startConversation(newPatient);
     };
 
     const startSimulatedChat = async (prompt: string) => {
         setSimulatingPrompt(prompt);
+        const patient = patients.find(p => p.name === "James Washington") || patients[1];
         
-        const patient = patients.find(p => p.name === "James Washington") || patients[0];
-        const newSessionData: SessionData = { 
-            sessionId: `session_${Date.now()}`, 
-            patientId: patient.id, 
-            startTime: new Date().toISOString(), 
-            needsIdentified: [],
-            notes: []
-        };
-        
-        try {
-            const systemInstruction = getSystemInstruction(patient);
-            const welcomeChat = await processAiResponse(null, "Start the conversation.", systemInstruction);
-            const promptResponse = await processAiResponse(welcomeChat.session, prompt);
-    
-            // Parse needs and notes from the final response
-            let finalAiText = promptResponse.responseText;
-            const needsTagRegex = /\[NEEDS_IDENTIFIED:\s*(\w+)\s*\]/g;
-            let needsMatch;
-            while ((needsMatch = needsTagRegex.exec(finalAiText)) !== null) {
-                if (newSessionData.needsIdentified) {
-                    newSessionData.needsIdentified.push(needsMatch[1].toUpperCase());
-                }
-            }
-            finalAiText = finalAiText.replace(needsTagRegex, '').trim();
+        setCurrentPatient(patient);
+        setMessages([]);
+        setCurrentView('chat');
+        setIsAiTyping(true);
+        setSessionId(null);
 
-            const noteTagRegex = /\[NOTE:\s*(.*?)\s*\]/g;
-            let noteMatch;
-            while ((noteMatch = noteTagRegex.exec(finalAiText)) !== null) {
-                if(newSessionData.notes){
-                    newSessionData.notes.push(noteMatch[1]);
-                }
-            }
-            finalAiText = finalAiText.replace(noteTagRegex, '').trim();
+        const patientContext = `This chat is with ${patient.name}. 
+Patient details:
+- Age: ${patient.age}
+- Last Visit: ${patient.lastVisit || 'N/A'}
+- Last Provider: ${patient.lastProvider || 'N/A'}
+- Risk Level: ${patient.riskLevel}
+- Address: ${patient.address}
+- Preferred Language: ${patient.preferredLanguage}`;
     
-            const simulatedMessages: Message[] = [
-                { id: Date.now(), content: welcomeChat.responseText, sender: 'ai', timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
-                { id: Date.now() + 1, content: prompt, sender: 'user', timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
-                { id: Date.now() + 2, content: finalAiText, sender: 'ai', timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
-            ];
-    
-            setCurrentPatient(patient);
-            setSessionData(newSessionData);
-            setActiveChat(promptResponse.session);
-            setMessages(simulatedMessages);
-            setCurrentView('chat');
+        try {
+            // 1. Start chat and get welcome message
+            const { sessionId: newSessionId, responseText: welcomeText } = await startChatSession(patientContext, "Start the conversation.");
+            
+            // Set up UI for chat
+            setSessionData({ sessionId: newSessionId, patientId: patient.id, startTime: new Date().toISOString(), needsIdentified: [], notes: [] });
+            setSessionId(newSessionId);
+            
+            setMessages([
+                { id: Date.now() + 1, content: welcomeText, sender: 'ai', timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) },
+                { id: Date.now() + 2, content: prompt, sender: 'user', timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) }
+            ]);
+            setIsAiTyping(true); // Keep typing indicator on
+
+            // 2. Send the user's prompt to get the next response
+            const { responseText: promptResponseText } = await sendMessage(newSessionId, prompt);
+
+            // Delay showing AI response for simulation effect
+            setTimeout(() => {
+                setIsAiTyping(false);
+                processAndAddAiResponse(promptResponseText);
+            }, 1000);
     
         } catch (error) {
             console.error("Error starting simulated chat:", error);
             alert("Sorry, there was an error generating the chat simulation. Please try again.");
+            setCurrentView('landing');
         } finally {
             setSimulatingPrompt(null);
         }
     };
     
-    const handlePromptClick = (prompt: string) => {
-        startSimulatedChat(prompt);
-    };
-
     const handleGenerateNewPrompts = async () => {
         setIsGeneratingPrompts(true);
         try {
-            const newPrompts = await generatePrompts();
+            const newPrompts = await generatePromptsFromApi();
             setDynamicPrompts(newPrompts);
         } catch (error) {
             console.error("Failed to generate new prompts, using initial set.", error);
-            setDynamicPrompts(initialExamplePrompts);
         } finally {
             setIsGeneratingPrompts(false);
         }
     };
     
+    const renderContent = () => {
+        switch (currentView) {
+            case 'chat':
+                return currentPatient && <ChatInterface currentPatient={currentPatient} sessionData={sessionData} messages={messages} inputValue={inputValue} setInputValue={setInputValue} handleSend={handleSend} handleKeyPress={handleKeyPress} endChatAndGoHome={endChatAndGoHome} isAiTyping={isAiTyping} trackConversion={trackConversion} />;
+            case 'analytics':
+                return <AnalyticsDashboard setCurrentView={setCurrentView} chatSessions={chatSessions} formatDuration={formatDuration} />;
+            case 'landing':
+            default:
+                return <LandingPage setCurrentView={setCurrentView} startConversation={startConversation} onNewChatClick={() => setIsNewPatientModalOpen(true)} handlePromptClick={startSimulatedChat} examplePrompts={dynamicPrompts} onGenerateNewPrompts={handleGenerateNewPrompts} isGeneratingPrompts={isGeneratingPrompts} simulatingPrompt={simulatingPrompt} />;
+        }
+    }
+
     return (
-        <div className="bg-gray-50">
-            {currentView === 'landing' && <LandingPage setCurrentView={setCurrentView} startConversation={startConversation} onNewChatClick={openNewPatientModal} handlePromptClick={handlePromptClick} examplePrompts={dynamicPrompts} onGenerateNewPrompts={handleGenerateNewPrompts} isGeneratingPrompts={isGeneratingPrompts} simulatingPrompt={simulatingPrompt} />}
-            {currentView === 'chat' && currentPatient && <ChatInterface currentPatient={currentPatient} sessionData={sessionData} messages={messages} inputValue={inputValue} setInputValue={setInputValue} handleSend={handleSend} handleKeyPress={handleKeyPress} endChatAndGoHome={endChatAndGoHome} isAiTyping={isAiTyping} trackConversion={trackConversion} />}
-            {currentView === 'analytics' && <AnalyticsDashboard setCurrentView={setCurrentView} chatSessions={chatSessions} formatDuration={formatDuration} />}
-            <NewPatientModal isOpen={isNewPatientModalOpen} onClose={closeNewPatientModal} onSubmit={handleNewPatientSubmit} newPatientInfo={newPatientInfo} setNewPatientInfo={setNewPatientInfo} />
+        <div className="bg-gray-50 font-sans">
+            {renderContent()}
+            <NewPatientModal isOpen={isNewPatientModalOpen} onClose={() => setIsNewPatientModalOpen(false)} onSubmit={handleNewPatientSubmit} newPatientInfo={newPatientInfo} setNewPatientInfo={setNewPatientInfo} />
         </div>
     );
 };
 
-export default DePaulPatientEngagementPlatform;
+export default App;

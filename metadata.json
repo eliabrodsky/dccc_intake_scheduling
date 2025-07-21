@@ -1,5 +1,6 @@
 {
   "name": "DePaul Patient Engagement Platform",
   "description": "An AI-powered platform to help DePaul Community Health Centers re-engage with patients through personalized, intelligent chat.",
-  "requestFramePermissions": []
+  "requestFramePermissions": [],
+  "prompt": ""
 }
